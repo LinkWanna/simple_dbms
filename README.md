@@ -28,7 +28,7 @@ The system uses local files for persistence:
 
 ## Feature
 
-- **Parser**: uses `pesqlite` for SQL parsing into AST
+- **Parser**: uses [pesqlite](https://github.com/LinkWanna/pesqlite) for SQL parsing into AST
 - **SQL support**: basic DDL, DML and queries with `WHERE`
 - **Transactions**: undo-style WAL with rollback support
 - **Persistence**: based on JSON/JSONL files for schema and table data
