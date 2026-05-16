@@ -3,7 +3,6 @@ pub mod error;
 pub mod schema;
 
 mod storage;
-mod wal;
 
 /// Re-export of the core execution engine.
 ///

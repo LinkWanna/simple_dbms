@@ -1,8 +1,8 @@
 use pesqlite::Delete;
 
+use super::wal::WalRecord;
 use super::{Engine, ExecutionResult};
 use crate::error::{DbError, DbResult};
-use crate::wal::WalRecord;
 
 impl Engine {
     /// Execute a single-table `DELETE`.

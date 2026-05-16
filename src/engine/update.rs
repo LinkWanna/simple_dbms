@@ -1,9 +1,9 @@
 use pesqlite::Update;
 
+use super::wal::WalRecord;
 use super::{Engine, ExecutionResult};
 use crate::error::{DbError, DbResult};
 use crate::schema::Value;
-use crate::wal::WalRecord;
 
 impl Engine {
     /// Execute a single-table `UPDATE`.

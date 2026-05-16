@@ -1,3 +1,6 @@
+mod row;
+mod table;
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -139,5 +142,65 @@ impl Wal {
             fs::remove_file(&self.path)?;
         }
         Ok(())
+    }
+}
+
+// ── Engine WAL recovery + undo dispatch ────────────────────────────
+
+impl super::Engine {
+    /// Recover from an unfinished transaction if a WAL file is present.
+    pub(super) fn recover_from_wal_if_needed(&mut self) -> DbResult<()> {
+        let wal = Wal::new(self.storage.wal_path());
+        if !wal.exists() {
+            return Ok(());
+        }
+
+        let records = wal.load_records()?;
+        if records.is_empty() {
+            wal.clear()?;
+            return Ok(());
+        }
+
+        for record in records.into_iter().rev() {
+            self.apply_wal_undo(record)?;
+        }
+
+        wal.clear()?;
+        Ok(())
+    }
+
+    /// Apply one WAL undo record.
+    pub(super) fn apply_wal_undo(&mut self, record: WalRecord) -> DbResult<()> {
+        match record {
+            WalRecord::InsertRow { table, row_id } => self.undo_insert_row(&table, row_id),
+            WalRecord::UpdateRow {
+                table,
+                row_id,
+                old_values,
+            } => self.replace_stored_row_values(&table, row_id, &old_values),
+            WalRecord::DeleteRow {
+                table,
+                row_id,
+                old_values,
+            } => self.restore_stored_row(&table, row_id, &old_values),
+            WalRecord::RewriteTable { table, old_rows } => {
+                self.storage.rewrite_rows(&table, &old_rows)
+            }
+            WalRecord::ReplaceSchema { old_schema } => self.storage.save_schema(&old_schema),
+            WalRecord::DropTableFile { table } => self.drop_table_file_if_exists(&table),
+            WalRecord::RestoreTableFile { table, rows } => self.restore_table_file(&table, &rows),
+            WalRecord::RenameTable { old_name, new_name } => {
+                self.rename_table(&new_name, &old_name)
+            }
+        }
+    }
+
+    /// Undo one inserted row by removing the row with the matching internal
+    /// `row_id`.
+    fn undo_insert_row(&self, table: &str, row_id: u64) -> DbResult<()> {
+        match self.find_row_by_id(table, row_id)? {
+            Some(_) => self.delete_stored_row_by_id(table, row_id),
+            None => Ok(()),
+        }
     }
 }

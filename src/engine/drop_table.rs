@@ -1,6 +1,6 @@
+use super::wal::WalRecord;
 use crate::engine::{Engine, ExecutionResult};
 use crate::error::{DbError, DbResult};
-use crate::wal::WalRecord;
 
 impl Engine {
     // ── Low-level compound operation ──────────────────────────────────

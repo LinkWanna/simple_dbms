@@ -1,5 +1,5 @@
+use super::wal::Wal;
 use crate::error::{DbError, DbResult};
-use crate::wal::Wal;
 
 use super::{Engine, ExecutionResult, TransactionState};
 

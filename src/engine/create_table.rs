@@ -1,8 +1,8 @@
 use pesqlite::{Affinity, ColumnConstraintType, ColumnDef, CreateTableBody};
 
+use super::wal::WalRecord;
 use crate::error::{DbError, DbResult};
 use crate::schema::{ColumnSchema, ColumnType, TableSchema, Value};
-use crate::wal::WalRecord;
 
 use super::{Engine, ExecutionResult};
 

@@ -1,9 +1,9 @@
 use pesqlite::InsertValues;
 
+use super::wal::WalRecord;
 use crate::error::DbResult;
 use crate::schema::Value;
 use crate::storage::StoredRow;
-use crate::wal::WalRecord;
 
 use super::constraints;
 use super::{Engine, ExecutionResult};

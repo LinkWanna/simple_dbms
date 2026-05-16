@@ -1,8 +1,8 @@
+use super::wal::WalRecord;
 use crate::engine::{Engine, ExecutionResult};
 use crate::error::{DbError, DbResult};
 use crate::schema::{TableSchema, Value};
 use crate::storage::StoredRow;
-use crate::wal::WalRecord;
 
 impl Engine {
     // ── Low-level compound operation ──────────────────────────────────

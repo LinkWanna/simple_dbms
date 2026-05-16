@@ -116,7 +116,7 @@ mod json;
 pub use json::JsonBackend;
 
 mod btree;
-pub use btree::{BTree, BTreeBackend};
+pub use btree::BTreeBackend;
 
 #[cfg(test)]
 mod tests;
