@@ -7,7 +7,7 @@
 //! - `<table>.jsonl.tmp` — temporary file for atomic table rewrites
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::DbResult;
@@ -119,5 +119,38 @@ impl StorageBackend for JsonBackend {
     fn create_dir_all(&self, path: &Path) -> DbResult<()> {
         fs::create_dir_all(path)?;
         Ok(())
+    }
+
+    // ── Page I/O ───────────────────────────────────────────────────
+
+    fn page_size(&self) -> usize {
+        4096
+    }
+
+    fn read_page(&self, path: &Path, page_num: u64) -> DbResult<Vec<u8>> {
+        let mut file = File::open(path)?;
+        let offset = page_num * 4096;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut buf = vec![0u8; 4096];
+        file.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    fn write_page(&self, path: &Path, page_num: u64, data: &[u8]) -> DbResult<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(path)?;
+        let offset = page_num * 4096;
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(data)?;
+        Ok(())
+    }
+
+    fn num_pages(&self, path: &Path) -> DbResult<u64> {
+        if !path.exists() {
+            return Ok(0);
+        }
+        Ok(path.metadata()?.len() / 4096)
     }
 }

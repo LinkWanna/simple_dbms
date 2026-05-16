@@ -5,13 +5,25 @@ use std::path::{Path, PathBuf};
 use crate::error::{DbError, DbResult};
 use crate::schema::{DatabaseSchema, TableSchema};
 
-use self::backend::{JsonBackend, StorageBackend};
+use self::backend::StorageBackend;
 
 // Re-export for external consumers (engine, wal).
 pub use self::backend::StoredRow;
 
+cfg_select! {
+    feature = "btree" => {
+        pub use self::backend::BTreeBackend as Backend;
+    }
+    feature = "json" => {
+        pub use self::backend::JsonBackend as Backend;
+    }
+    _ => {
+        compile_error!("At least one storage backend feature must be enabled: 'btree' or 'json'");
+    }
+}
+
 /// Default storage type: JSON backend.
-pub type Storage = StorageImpl<JsonBackend>;
+pub type Storage = StorageImpl<Backend>;
 
 /// Storage facade that composes a [StorageBackend] with coordination logic.
 ///
@@ -182,6 +194,12 @@ impl<B: StorageBackend + Default> StorageImpl<B> {
     /// Atomically rewrite a table file with the provided stored rows.
     pub fn rewrite_rows(&self, table: &str, rows: &[StoredRow]) -> DbResult<()> {
         self.ensure_table_exists(table)?;
+        let path = self.backend.table_path(&self.root, table);
+        self.backend.rewrite_rows(&path, rows)
+    }
+
+    /// Rewrite a table file even if it doesn't exist yet (WAL recovery).
+    pub(crate) fn force_rewrite_rows(&self, table: &str, rows: &[StoredRow]) -> DbResult<()> {
         let path = self.backend.table_path(&self.root, table);
         self.backend.rewrite_rows(&path, rows)
     }

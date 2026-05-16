@@ -18,8 +18,7 @@ mod transaction;
 mod update;
 mod where_clause;
 
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 
 use crate::wal::WalRecord;
 
@@ -210,15 +209,9 @@ impl Engine {
     /// Restore a table data file directly from WAL payload without requiring the
     /// current schema to already contain the table.
     pub(super) fn restore_table_file(&self, table: &str, rows: &[StoredRow]) -> DbResult<()> {
-        let table_path = self.storage.table_path(table);
-        let mut file = File::create(&table_path)?;
-        for row in rows {
-            let line = serde_json::to_string(row)?;
-            file.write_all(line.as_bytes())?;
-            file.write_all(b"\n")?;
-        }
-        file.flush()?;
-        Ok(())
+        // Use force_rewrite_rows because this is called during WAL recovery
+        // when the table may not exist on disk yet.
+        self.storage.force_rewrite_rows(table, rows)
     }
 
     // ── WAL undo ────────────────────────────────────────────────────
