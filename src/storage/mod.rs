@@ -145,6 +145,11 @@ impl<B: StorageBackend + Default> StorageImpl<B> {
     }
 
     /// Rewrite a table file even if it doesn't exist yet (WAL recovery).
+    ///
+    /// Unlike [`rewrite_rows`](Self::rewrite_rows), this skips the
+    /// `ensure_table_exists` check so WAL recovery can restore a table
+    /// that was dropped before the crash.  The caller (engine) is
+    /// responsible for schema correctness.
     pub(crate) fn force_rewrite_rows(&self, table: &str, rows: &[StoredRow]) -> DbResult<()> {
         let path = self.backend.table_path(&self.root, table);
         self.backend.rewrite_rows(&path, rows)

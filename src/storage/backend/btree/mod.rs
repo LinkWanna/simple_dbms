@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use crate::error::{DbError, DbResult};
 use crate::schema::DatabaseSchema;
 
-use self::layout::{Entry, LEAF, PAGE_SIZE, Page};
-use super::{JsonBackend, StorageBackend, StoredRow};
+use self::layout::{Entry, LEAF, MIN_ENTRIES, PAGE_SIZE, Page};
+use super::{JsonBackend, PageStorage, StorageBackend, StoredRow};
 
 // ═══════════════════════════════════════════════════════════════════════
 //  B-Tree index data structure
@@ -39,7 +39,7 @@ impl Superblock {
 
     fn deserialize(data: &[u8]) -> DbResult<Self> {
         if data.len() < PAGE_SIZE || data[8] != 0x42 {
-            return Err(DbError::syntax("invalid B-Tree superblock"));
+            return Err(DbError::StorageCorruption("invalid B-Tree superblock".into()));
         }
         let root_page = u64::from_le_bytes(data[0..8].try_into().unwrap());
         Ok(Superblock { root_page })
@@ -47,13 +47,13 @@ impl Superblock {
 }
 
 /// A persistent B-Tree index backed by a [StorageBackend].
-pub struct BTree<B: StorageBackend> {
+pub struct BTree<B: PageStorage + StorageBackend> {
     backend: B,
     path: PathBuf,
     root_page: u64,
 }
 
-impl<B: StorageBackend> BTree<B> {
+impl<B: PageStorage + StorageBackend> BTree<B> {
     /// Create a new, empty B-Tree index file.
     pub fn create(backend: B, path: impl AsRef<Path>) -> DbResult<Self> {
         let path = path.as_ref().to_path_buf();
@@ -168,7 +168,7 @@ struct SplitResult {
     right_page: u64,
 }
 
-impl<B: StorageBackend> BTree<B> {
+impl<B: PageStorage + StorageBackend> BTree<B> {
     fn insert_recursive(
         &mut self,
         page_num: u64,
@@ -195,6 +195,8 @@ impl<B: StorageBackend> BTree<B> {
             let sep_key = right.entries[0].key();
             let sep_val = right.entries[0].row_id();
             page.entries.truncate(mid);
+            debug_assert!(page.entries.len() >= MIN_ENTRIES, "leaf left-page underflow after split");
+            debug_assert!(right.entries.len() >= MIN_ENTRIES, "leaf right-page underflow after split");
             self.write_page(page_num, &page)?;
             self.write_page(right_num, &right)?;
             return Ok(Some(SplitResult {
@@ -238,6 +240,9 @@ impl<B: StorageBackend> BTree<B> {
             if let Entry::Internal { left_child, .. } = &mut page.entries[pos + 1] {
                 *left_child = split.right_page;
             }
+        } else {
+            // Separator appended at the end → update rightmost_child.
+            page.rightmost_child = split.right_page;
         }
         if !page.is_full() {
             self.write_page(page_num, &page)?;
@@ -257,6 +262,8 @@ impl<B: StorageBackend> BTree<B> {
         };
         page.rightmost_child = lr;
         page.entries.truncate(mid);
+        debug_assert!(page.entries.len() >= MIN_ENTRIES, "internal left-page underflow after split");
+        debug_assert!(right.entries.len() >= MIN_ENTRIES, "internal right-page underflow after split");
         for e in &right.entries {
             if let Entry::Internal { left_child, .. } = e {
                 let mut cp = self.read_page(*left_child)?;
@@ -372,6 +379,11 @@ impl<B: StorageBackend> BTree<B> {
 pub struct BTreeBackend;
 
 impl BTreeBackend {
+    /// Returns `true` if the path is a BTree table path (`.btree` extension).
+    fn is_table_path(path: &Path) -> bool {
+        path.extension().map(|e| e == "btree").unwrap_or(false)
+    }
+
     fn idx_path(table_path: &Path) -> PathBuf {
         table_path.with_extension("idx")
     }
@@ -388,11 +400,6 @@ impl BTreeBackend {
         } else {
             BTree::create(JsonBackend, &idx)
         }
-    }
-
-    /// Open index mutably.
-    fn open_index_mut(&self, table_path: &Path) -> DbResult<BTree<JsonBackend>> {
-        self.open_index(table_path)
     }
 
     /// Read a StoredRow from the data file at the given offset.
@@ -461,25 +468,31 @@ impl StorageBackend for BTreeBackend {
 
     fn append_row(&self, table_path: &Path, row: &StoredRow) -> DbResult<()> {
         let offset = Self::append_row_to_dat(&Self::dat_path(table_path), row)?;
-        let mut idx = self.open_index_mut(table_path)?;
+        let mut idx = self.open_index(table_path)?;
         idx.insert(row.row_id as i64, offset)
     }
 
     fn rewrite_rows(&self, table_path: &Path, rows: &[StoredRow]) -> DbResult<()> {
         let idx_path = Self::idx_path(table_path);
         let dat_path = Self::dat_path(table_path);
-        if JsonBackend.file_exists(&idx_path) {
-            JsonBackend.remove_file(&idx_path)?;
-        }
-        if JsonBackend.file_exists(&dat_path) {
-            JsonBackend.remove_file(&dat_path)?;
-        }
 
-        let mut idx = BTree::create(JsonBackend, &idx_path)?;
+        // Build new index + data in temporary files so a crash during
+        // the rewrite leaves the originals intact.  fs::rename is atomic
+        // on Linux and silently replaces the target.
+        let tmp_idx = idx_path.with_extension("idx.tmp");
+        let tmp_dat = dat_path.with_extension("dat.tmp");
+
+        let mut idx = BTree::create(JsonBackend, &tmp_idx)?;
+        // Always create the data file, even for empty tables.
+        JsonBackend.create_file(&tmp_dat)?;
         for row in rows {
-            let offset = Self::append_row_to_dat(&dat_path, row)?;
+            let offset = Self::append_row_to_dat(&tmp_dat, row)?;
             idx.insert(row.row_id as i64, offset)?;
         }
+
+        // Atomically swap temps over originals.
+        JsonBackend.rename_file(&tmp_idx, &idx_path)?;
+        JsonBackend.rename_file(&tmp_dat, &dat_path)?;
         Ok(())
     }
 
@@ -491,7 +504,7 @@ impl StorageBackend for BTreeBackend {
     }
 
     fn remove_file(&self, path: &Path) -> DbResult<()> {
-        if path.extension().map(|e| e == "btree").unwrap_or(false) {
+        if Self::is_table_path(path) {
             let idx = Self::idx_path(path);
             let dat = Self::dat_path(path);
             if JsonBackend.file_exists(&idx) {
@@ -507,12 +520,16 @@ impl StorageBackend for BTreeBackend {
     }
 
     fn rename_file(&self, from: &Path, to: &Path) -> DbResult<()> {
-        JsonBackend.rename_file(&Self::idx_path(from), &Self::idx_path(to))?;
-        JsonBackend.rename_file(&Self::dat_path(from), &Self::dat_path(to))
+        if Self::is_table_path(from) && Self::is_table_path(to) {
+            JsonBackend.rename_file(&Self::idx_path(from), &Self::idx_path(to))?;
+            JsonBackend.rename_file(&Self::dat_path(from), &Self::dat_path(to))
+        } else {
+            JsonBackend.rename_file(from, to)
+        }
     }
 
     fn file_exists(&self, path: &Path) -> bool {
-        if path.extension().map(|e| e == "btree").unwrap_or(false) {
+        if Self::is_table_path(path) {
             JsonBackend.file_exists(&Self::idx_path(path))
         } else {
             JsonBackend.file_exists(path)
@@ -522,20 +539,10 @@ impl StorageBackend for BTreeBackend {
     fn create_dir_all(&self, path: &Path) -> DbResult<()> {
         JsonBackend.create_dir_all(path)
     }
-
-    fn page_size(&self) -> usize {
-        JsonBackend.page_size()
-    }
-    fn read_page(&self, path: &Path, page_num: u64) -> DbResult<Vec<u8>> {
-        JsonBackend.read_page(path, page_num)
-    }
-    fn write_page(&self, path: &Path, page_num: u64, data: &[u8]) -> DbResult<()> {
-        JsonBackend.write_page(path, page_num, data)
-    }
-    fn num_pages(&self, path: &Path) -> DbResult<u64> {
-        JsonBackend.num_pages(path)
-    }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod integration_tests;

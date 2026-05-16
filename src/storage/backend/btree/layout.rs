@@ -122,11 +122,11 @@ impl Page {
 
     pub fn deserialize(data: &[u8]) -> DbResult<Self> {
         if data.len() < PAGE_SIZE {
-            return Err(DbError::syntax("page buffer too short"));
+            return Err(DbError::StorageCorruption("page buffer too short".into()));
         }
         let page_type = data[0];
         if page_type != LEAF && page_type != INTERNAL {
-            return Err(DbError::syntax(format!("invalid page type: {page_type}")));
+            return Err(DbError::StorageCorruption(format!("invalid page type: {page_type}")));
         }
         let num = u16::from_le_bytes([data[1], data[2]]) as usize;
         let parent_page = u64::from_le_bytes(data[3..11].try_into().unwrap());

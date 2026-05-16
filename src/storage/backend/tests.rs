@@ -3,7 +3,7 @@
 use std::io::Write;
 use tempfile::TempDir;
 
-use crate::storage::backend::{JsonBackend, StorageBackend};
+use crate::storage::backend::{JsonBackend, PageStorage};
 
 fn temp_path(dir: &TempDir, name: &str) -> std::path::PathBuf {
     dir.path().join(name)

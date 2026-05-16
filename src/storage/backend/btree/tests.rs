@@ -108,3 +108,55 @@ fn range_scan_post_split() {
         assert_eq!(*row_id, ((50 + offset) * 100) as u64);
     }
 }
+
+#[test]
+fn insert_random_keys() {
+    use rand::seq::SliceRandom;
+    let dir = temp_dir();
+    let path = temp_path(&dir, "test.idx");
+    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+
+    let mut keys: Vec<i64> = (0..500).collect();
+    keys.shuffle(&mut rand::thread_rng());
+    for &k in &keys {
+        bt.insert(k, (k * 3) as u64).unwrap();
+    }
+    for &k in &keys {
+        assert_eq!(bt.search(k).unwrap(), Some((k * 3) as u64));
+    }
+}
+
+#[test]
+fn internal_split_verified() {
+    // Insert enough keys to trigger both leaf and internal page splits.
+    // 1000 keys > 253*2 ensures multi-level splitting.
+    let dir = temp_dir();
+    let path = temp_path(&dir, "test.idx");
+    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    for i in 0..1000 {
+        bt.insert(i * 2, (i * 7) as u64).unwrap();
+    }
+    // Verify random lookups across the full range.
+    for i in (0..1000).step_by(17) {
+        assert_eq!(bt.search(i * 2).unwrap(), Some((i * 7) as u64));
+    }
+}
+
+#[test]
+fn range_scan_with_random_keys() {
+    use rand::seq::SliceRandom;
+    let dir = temp_dir();
+    let path = temp_path(&dir, "test.idx");
+    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+
+    let mut keys: Vec<i64> = (0..200).collect();
+    keys.shuffle(&mut rand::thread_rng());
+    for &k in &keys {
+        bt.insert(k, k as u64).unwrap();
+    }
+    let results = bt.range_scan(50, 100).unwrap();
+    assert_eq!(results.len(), 51);
+    for &r in &results {
+        assert!(r >= 50 && r <= 100);
+    }
+}

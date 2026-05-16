@@ -53,6 +53,10 @@ pub enum DbError {
     /// UNIQUE constraint violation for a given column.
     #[error("Unique constraint violation on column '{column}': duplicate value")]
     UniqueConstraintViolation { column: String },
+
+    /// Storage corruption detected (invalid page format, bad magic, etc.).
+    #[error("Storage corruption: {0}")]
+    StorageCorruption(String),
 }
 
 impl DbError {

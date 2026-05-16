@@ -89,7 +89,6 @@ impl Engine {
             Stmt::Release(_) => Err(DbError::syntax("RELEASE SAVEPOINT is not supported yet")),
         }
     }
-
 }
 
 #[cfg(test)]

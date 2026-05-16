@@ -82,34 +82,28 @@ pub trait StorageBackend {
 
     /// Recursively create the directory containing `path`.
     fn create_dir_all(&self, path: &Path) -> DbResult<()>;
+}
 
-    // ── Page I/O (for B-Tree indexes) ──────────────────────────────
-
-    /// Page size for page-oriented files (default 4096 bytes).
+/// Page-level I/O for page-oriented structures such as B-Tree indexes.
+///
+/// This trait is separate from [`StorageBackend`] because page I/O is
+/// an orthogonal concern: many storage backends do not need it.
+pub trait PageStorage {
+    /// Page size in bytes (default 4096).
     fn page_size(&self) -> usize {
         4096
     }
 
     /// Read one page by number from a page-oriented file.
-    /// Returns exactly `page_size()` bytes.
-    fn read_page(&self, path: &Path, page_num: u64) -> DbResult<Vec<u8>> {
-        let _ = (path, page_num);
-        unimplemented!("read_page: page I/O not supported by this backend")
-    }
+    fn read_page(&self, path: &Path, page_num: u64) -> DbResult<Vec<u8>>;
 
     /// Write one page by number to a page-oriented file.
     /// The file is extended if the page does not exist yet.
-    fn write_page(&self, path: &Path, page_num: u64, data: &[u8]) -> DbResult<()> {
-        let _ = (path, page_num, data);
-        unimplemented!("write_page: page I/O not supported by this backend")
-    }
+    fn write_page(&self, path: &Path, page_num: u64, data: &[u8]) -> DbResult<()>;
 
     /// Return the number of pages in a page-oriented file.
     /// Returns 0 if the file does not exist.
-    fn num_pages(&self, path: &Path) -> DbResult<u64> {
-        let _ = path;
-        unimplemented!("num_pages: page I/O not supported by this backend")
-    }
+    fn num_pages(&self, path: &Path) -> DbResult<u64>;
 }
 
 mod json;

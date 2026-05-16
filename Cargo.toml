@@ -16,3 +16,6 @@ thiserror = "1.0"
 tempfile = "3.10"
 serde_json = "1.0"
 pesqlite = "0.1"
+
+[dev-dependencies]
+rand = "0.8"

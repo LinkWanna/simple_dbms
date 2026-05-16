@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::error::DbResult;
 use crate::schema::DatabaseSchema;
 
-use super::{StorageBackend, StoredRow};
+use super::{PageStorage, StorageBackend, StoredRow};
 
 /// Backend that persists everything as human-readable JSON / JSONL files.
 ///
@@ -77,6 +77,7 @@ impl StorageBackend for JsonBackend {
         let line = serde_json::to_string(row)?;
         file.write_all(line.as_bytes())?;
         file.write_all(b"\n")?;
+        file.flush()?;
         Ok(())
     }
 
@@ -120,9 +121,9 @@ impl StorageBackend for JsonBackend {
         fs::create_dir_all(path)?;
         Ok(())
     }
+}
 
-    // ── Page I/O ───────────────────────────────────────────────────
-
+impl PageStorage for JsonBackend {
     fn page_size(&self) -> usize {
         4096
     }
@@ -141,6 +142,7 @@ impl StorageBackend for JsonBackend {
         let offset = page_num * 4096;
         file.seek(SeekFrom::Start(offset))?;
         file.write_all(data)?;
+        file.flush()?;
         Ok(())
     }
 
