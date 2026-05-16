@@ -1,19 +1,13 @@
-use pesqlite::CreateTableBody;
+use pesqlite::{Affinity, ColumnConstraintType, ColumnDef, CreateTableBody};
+
+use crate::error::{DbError, DbResult};
+use crate::schema::{ColumnSchema, ColumnType, TableSchema, Value};
+use crate::wal::WalRecord;
 
 use super::{Engine, ExecutionResult};
-use crate::error::{DbError, DbResult};
-use crate::schema::TableSchema;
-use crate::wal::WalRecord;
 
 impl Engine {
     /// Execute `CREATE TABLE`.
-    ///
-    /// # Arguments
-    /// * `create_table` - Parsed create-table AST node.
-    ///
-    /// # Errors
-    /// Returns an error if the table definition uses unsupported syntax
-    /// or the table cannot be persisted.
     pub(super) fn execute_create_table(
         &mut self,
         create_table: pesqlite::CreateTable,
@@ -49,5 +43,102 @@ impl Engine {
         Ok(ExecutionResult::Message(format!(
             "Table '{table_name}' created"
         )))
+    }
+
+    /// Convert a `pesqlite` column definition into the local schema type.
+    pub(super) fn column_def_to_schema(column_def: ColumnDef) -> DbResult<ColumnSchema> {
+        let column_name = column_def.name.clone();
+
+        let mut not_null = false;
+        let mut unique = false;
+        let mut default_value: Option<Value> = None;
+        for constraint in &column_def.constraints {
+            match &constraint.ty {
+                ColumnConstraintType::NotNull => not_null = true,
+                ColumnConstraintType::Unique => unique = true,
+                ColumnConstraintType::PrimaryKey { .. } => {
+                    not_null = true;
+                    unique = true;
+                }
+                ColumnConstraintType::Default(expr) => {
+                    if default_value.is_some() {
+                        return Err(DbError::syntax(format!(
+                            "multiple DEFAULT constraints are not allowed for column '{}'",
+                            column_name
+                        )));
+                    }
+                    default_value = Some(Self::expr_to_value(expr.clone())?);
+                }
+                ColumnConstraintType::Check(..) => todo!(),
+                ColumnConstraintType::ForeignKey(..) => todo!(),
+            }
+        }
+
+        let col_type = match column_def.col_type {
+            Some(type_name) => match type_name.affinity {
+                Affinity::Integer => ColumnType::Int,
+                Affinity::Real => ColumnType::Float,
+                Affinity::Text => match type_name.size {
+                    Some(pesqlite::TypeSize::MaxSize(size)) => {
+                        let len = size.parse::<usize>().map_err(|_| {
+                            DbError::syntax(format!(
+                                "invalid VARCHAR size for column '{}'",
+                                column_name
+                            ))
+                        })?;
+                        ColumnType::Varchar(len)
+                    }
+                    Some(pesqlite::TypeSize::TypeSize(size, _)) => {
+                        let len = size.parse::<usize>().map_err(|_| {
+                            DbError::syntax(format!(
+                                "invalid VARCHAR size for column '{}'",
+                                column_name
+                            ))
+                        })?;
+                        ColumnType::Varchar(len)
+                    }
+                    None => ColumnType::Varchar(255),
+                },
+                other => {
+                    return Err(DbError::syntax(format!(
+                        "unsupported column type for '{}': {:?}",
+                        column_name, other
+                    )));
+                }
+            },
+            None => {
+                return Err(DbError::syntax(format!(
+                    "column '{}' must declare a type",
+                    column_name
+                )));
+            }
+        };
+
+        let mut schema =
+            ColumnSchema::with_nullability(column_def.name, col_type.clone(), not_null);
+        schema.unique = unique;
+
+        if let Some(default_value) = default_value {
+            TableSchema::new(
+                "__default_validation__",
+                vec![ColumnSchema::with_nullability(
+                    column_name.clone(),
+                    col_type.clone(),
+                    not_null,
+                )],
+            )
+            .validate_row(&[default_value.clone()])?;
+
+            if matches!(default_value, Value::Null) && not_null {
+                return Err(DbError::InvalidValue {
+                    column: column_name,
+                    reason: "NULL is not allowed for NOT NULL column".to_string(),
+                });
+            }
+
+            schema.default = Some(default_value);
+        }
+
+        Ok(schema)
     }
 }

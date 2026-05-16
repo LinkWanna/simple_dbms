@@ -1,7 +1,8 @@
-use pesqlite::{FromClause, Select, SelectCore};
+use pesqlite::{FromClause, ResultColumn, Select, SelectCore};
+use pesqlite::Expr;
 
 use crate::error::{DbError, DbResult};
-use crate::schema::Value;
+use crate::schema::{TableSchema, Value};
 
 use super::{Engine, ExecutionResult};
 
@@ -74,5 +75,41 @@ impl Engine {
             columns: projection_columns,
             rows,
         })
+    }
+
+    /// Build output projection information for a select list.
+    pub(super) fn build_projection(
+        table_schema: &TableSchema,
+        result_columns: &[ResultColumn],
+    ) -> DbResult<(Vec<usize>, Vec<String>)> {
+        let mut indices = Vec::new();
+        let mut names = Vec::new();
+
+        for result_column in result_columns {
+            match result_column {
+                ResultColumn::Star => {
+                    for (index, column) in table_schema.columns.iter().enumerate() {
+                        indices.push(index);
+                        names.push(column.name.clone());
+                    }
+                }
+                ResultColumn::Expr(expr, alias) => {
+                    let column_name = match expr {
+                        Expr::QualifiedColumn(_, _, column_name) => column_name,
+                        _ => {
+                            return Err(DbError::syntax(
+                                "only direct column projection is supported",
+                            ));
+                        }
+                    };
+
+                    let index = table_schema.column_index(column_name)?;
+                    indices.push(index);
+                    names.push(alias.clone().unwrap_or_else(|| column_name.clone()));
+                }
+            }
+        }
+
+        Ok((indices, names))
     }
 }

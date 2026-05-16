@@ -1,19 +1,16 @@
-use pesqlite::{Insert, InsertValues};
+use pesqlite::InsertValues;
 
-use super::{Engine, ExecutionResult};
-use crate::error::{DbError, DbResult};
+use crate::error::DbResult;
+use crate::schema::Value;
+use crate::storage::StoredRow;
 use crate::wal::WalRecord;
+
+use super::constraints;
+use super::{Engine, ExecutionResult};
 
 impl Engine {
     /// Execute `INSERT INTO ... VALUES ...`.
-    ///
-    /// # Arguments
-    /// * `insert` - Parsed insert AST node.
-    ///
-    /// # Errors
-    /// Returns an error if the table is missing, values are invalid,
-    /// or unsupported insert forms are used.
-    pub(super) fn execute_insert(&mut self, insert: Insert) -> DbResult<ExecutionResult> {
+    pub(super) fn execute_insert(&mut self, insert: pesqlite::Insert) -> DbResult<ExecutionResult> {
         let table_name = insert.schema_table.name;
         let schema = self.storage.load_schema()?;
         let table_schema = schema.get_table(&table_name)?.clone();
@@ -25,7 +22,7 @@ impl Engine {
             for column_name in &insert.cols {
                 let column_index = table_schema.column_index(column_name)?;
                 if column_indices.contains(&column_index) {
-                    return Err(DbError::syntax(format!(
+                    return Err(crate::error::DbError::syntax(format!(
                         "duplicate column '{}' in INSERT column list",
                         column_name
                     )));
@@ -35,7 +32,7 @@ impl Engine {
             Some(column_indices)
         };
 
-        let inserted = match insert.values {
+        let inserted_rows = match insert.values {
             InsertValues::Values { values, .. } => {
                 let mut count = 0usize;
                 for expr_row in values {
@@ -47,7 +44,7 @@ impl Engine {
                     let row = match &explicit_columns {
                         Some(column_indices) => {
                             if input_row.len() != column_indices.len() {
-                                return Err(DbError::ColumnCountMismatch {
+                                return Err(crate::error::DbError::ColumnCountMismatch {
                                     expected: column_indices.len(),
                                     found: input_row.len(),
                                 });
@@ -80,7 +77,7 @@ impl Engine {
                 count
             }
             InsertValues::Select { .. } => {
-                return Err(DbError::syntax(
+                return Err(crate::error::DbError::syntax(
                     "INSERT INTO ... SELECT ... is not supported yet",
                 ));
             }
@@ -100,7 +97,39 @@ impl Engine {
         };
 
         Ok(ExecutionResult::Message(format!(
-            "{inserted} row(s) inserted into '{table_name}'"
+            "{inserted_rows} row(s) inserted into '{table_name}'"
         )))
+    }
+
+    /// Append one user-visible row after validating it against the stored schema
+    /// and assigning a new internal `row_id`.
+    pub(super) fn append_validated_row(&self, table: &str, row: &[Value]) -> DbResult<StoredRow> {
+        let schema = self.storage.load_schema()?;
+        let table_schema = schema.get_table(table)?;
+
+        table_schema.validate_row(row)?;
+        self.storage.ensure_table_exists(table)?;
+
+        let existing_rows = self.storage.load_rows(table)?;
+        constraints::validate_unique_append(table_schema, &existing_rows, row)?;
+
+        let row_id = self.next_row_id(table)?;
+        let stored_row = StoredRow {
+            row_id,
+            values: row.to_vec(),
+        };
+
+        self.storage.append_stored_row(table, &stored_row)?;
+        Ok(stored_row)
+    }
+
+    /// Return the next available internal `row_id` for a table.
+    fn next_row_id(&self, table: &str) -> DbResult<u64> {
+        let mut max_row_id = 0u64;
+        self.storage.scan_apply_rows(table, |row| {
+            max_row_id = max_row_id.max(row.row_id);
+            Ok(())
+        })?;
+        Ok(max_row_id + 1)
     }
 }

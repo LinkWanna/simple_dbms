@@ -1,6 +1,7 @@
 use crate::engine::{Engine, ExecutionResult};
 use crate::error::{DbError, DbResult};
-use crate::schema::Value;
+use crate::schema::{TableSchema, Value};
+use crate::storage::StoredRow;
 use crate::wal::WalRecord;
 
 impl Engine {
@@ -182,5 +183,54 @@ impl Engine {
                 )))
             }
         }
+    }
+
+    /// Rewrite a table file from user-visible row values while preserving
+    /// existing row ids by file order and assigning new ids for appended rows.
+    pub(super) fn rewrite_table_from_values(
+        &self,
+        table: &str,
+        rows: &[Vec<Value>],
+    ) -> DbResult<()> {
+        let existing_ids = self
+            .storage
+            .load_rows(table)?
+            .into_iter()
+            .map(|row| row.row_id)
+            .collect::<Vec<_>>();
+
+        let mut next_row_id = existing_ids.iter().copied().max().unwrap_or(0) + 1;
+        let mut stored_rows = Vec::with_capacity(rows.len());
+
+        for (index, row) in rows.iter().enumerate() {
+            let row_id = if index < existing_ids.len() {
+                existing_ids[index]
+            } else {
+                let row_id = next_row_id;
+                next_row_id += 1;
+                row_id
+            };
+
+            stored_rows.push(StoredRow {
+                row_id,
+                values: row.clone(),
+            });
+        }
+
+        self.storage.rewrite_rows(table, &stored_rows)
+    }
+
+    /// Replace one existing table definition in schema metadata.
+    pub(super) fn replace_table_schema(
+        &self,
+        table: &str,
+        new_schema: TableSchema,
+    ) -> DbResult<()> {
+        let mut schema = self.storage.load_schema()?;
+        if !schema.tables.contains_key(table) {
+            return Err(DbError::TableNotFound(table.to_string()));
+        }
+        schema.tables.insert(table.to_string(), new_schema);
+        self.storage.save_schema(&schema)
     }
 }
