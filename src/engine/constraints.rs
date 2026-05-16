@@ -51,7 +51,7 @@ pub fn validate_unique_stored_rows(table_schema: &TableSchema, rows: &[StoredRow
         return Ok(());
     }
 
-    let mut seen_by_column: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut seen_by_column: HashMap<String, HashSet<i64>> = HashMap::new();
 
     for row in rows {
         for (column_index, column_name) in &unique_columns {
@@ -59,7 +59,7 @@ pub fn validate_unique_stored_rows(table_schema: &TableSchema, rows: &[StoredRow
                 continue;
             }
 
-            let key = serde_json::to_string(&row.values[*column_index])?;
+            let key = crate::engine::value_to_key(&row.values[*column_index]);
             let seen = seen_by_column.entry(column_name.clone()).or_default();
 
             if !seen.insert(key) {

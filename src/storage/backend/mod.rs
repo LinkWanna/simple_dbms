@@ -17,7 +17,8 @@ use crate::schema::{DatabaseSchema, Value};
 /// This type is shared across all backends — the logical row structure (row_id
 /// + values) is format-agnostic. Only the serialization format differs per
 /// backend.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 pub struct StoredRow {
     pub row_id: u64,
     pub values: Vec<Value>,
@@ -69,6 +70,14 @@ pub trait StorageBackend {
     /// partial writes on crash.
     fn rewrite_rows(&self, path: &Path, rows: &[StoredRow]) -> DbResult<()>;
 
+    /// Read specific rows identified by their internal `row_id`s.
+    ///
+    /// Only matching rows are passed to `func`. The backend may implement
+    /// this as random access (B-Tree) or a filtered full scan (JSONL).
+    fn read_rows_by_id<F>(&self, path: &Path, row_ids: &[u64], func: F) -> DbResult<()>
+    where
+        F: FnMut(&StoredRow) -> DbResult<()>;
+
     // ── File-system helpers ──────────────────────────────────────
 
     /// Create an empty regular file at `path`.
@@ -109,11 +118,20 @@ pub trait PageStorage {
     fn num_pages(&self, path: &Path) -> DbResult<u64>;
 }
 
-mod json;
-pub use json::JsonBackend;
-
-mod btree;
-pub use btree::{BTree, BTreeBackend};
-
-#[cfg(test)]
-mod tests;
+cfg_select! {
+    feature = "btree" => {
+        mod btree;
+        pub use btree::BTree;
+        pub use btree::BTreeBackend;
+        pub use btree::page_file::PageFile;
+        pub use btree::schema_binary;
+        pub use btree::BTreeBackend as Backend;
+    }
+    feature = "json" => {
+        mod json;
+        pub use json::JsonBackend as Backend;
+    }
+    _ => {
+        compile_error!("At least one storage backend feature must be enabled: 'btree' or 'json'");
+    }
+}

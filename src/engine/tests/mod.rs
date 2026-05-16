@@ -2,6 +2,7 @@ mod alter_table;
 mod create_table;
 mod delete;
 mod drop_table;
+#[cfg(feature = "btree")]
 mod index;
 mod insert;
 mod select;

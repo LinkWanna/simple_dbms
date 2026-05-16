@@ -1,7 +1,7 @@
 use tempfile::TempDir;
 
 use super::BTree;
-use crate::storage::backend::JsonBackend;
+use super::page_file::PageFile;
 
 fn temp_dir() -> TempDir {
     TempDir::new().unwrap()
@@ -15,7 +15,7 @@ fn temp_path(dir: &TempDir, name: &str) -> std::path::PathBuf {
 fn create_and_search_empty() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let bt = BTree::create(JsonBackend, &path).unwrap();
+    let bt = BTree::create(PageFile, &path).unwrap();
     assert_eq!(bt.search(42).unwrap(), None);
 }
 
@@ -23,7 +23,7 @@ fn create_and_search_empty() {
 fn insert_and_search_one() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
     bt.insert(42, 100).unwrap();
     assert_eq!(bt.search(42).unwrap(), Some(100));
     assert_eq!(bt.search(41).unwrap(), None);
@@ -34,7 +34,7 @@ fn insert_and_search_one() {
 fn insert_and_search_many() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
     for i in 0..100 {
         bt.insert(i, (i * 10) as u64).unwrap();
     }
@@ -44,19 +44,25 @@ fn insert_and_search_many() {
 }
 
 #[test]
-fn insert_duplicate_is_error() {
+fn insert_duplicate_is_allowed() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
     bt.insert(1, 10).unwrap();
-    assert!(bt.insert(1, 20).is_err());
+    // Duplicate key is now allowed (needed for hash-based indexes).
+    bt.insert(1, 20).unwrap();
+    // Both values should be visible via range_scan.
+    let results = bt.range_scan(1, 1).unwrap();
+    assert_eq!(results.len(), 2);
+    assert!(results.contains(&10));
+    assert!(results.contains(&20));
 }
 
 #[test]
 fn range_scan() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
     for i in 0..50 {
         bt.insert(i, (i * 2) as u64).unwrap();
     }
@@ -72,12 +78,12 @@ fn reopen_persists_data() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
     {
-        let mut bt = BTree::create(JsonBackend, &path).unwrap();
+        let mut bt = BTree::create(PageFile, &path).unwrap();
         bt.insert(7, 777).unwrap();
         bt.insert(3, 333).unwrap();
         bt.insert(99, 999).unwrap();
     }
-    let bt = BTree::open(JsonBackend, &path).unwrap();
+    let bt = BTree::open(PageFile, &path).unwrap();
     assert_eq!(bt.search(7).unwrap(), Some(777));
     assert_eq!(bt.search(3).unwrap(), Some(333));
     assert_eq!(bt.search(99).unwrap(), Some(999));
@@ -87,7 +93,7 @@ fn reopen_persists_data() {
 fn leaf_split_triggered() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
     for i in 0..300 {
         bt.insert(i, (i * 10) as u64).unwrap();
     }
@@ -100,7 +106,7 @@ fn leaf_split_triggered() {
 fn range_scan_post_split() {
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
     for i in 0..300 {
         bt.insert(i, (i * 100) as u64).unwrap();
     }
@@ -116,7 +122,7 @@ fn insert_random_keys() {
     use rand::seq::SliceRandom;
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
 
     let mut keys: Vec<i64> = (0..500).collect();
     keys.shuffle(&mut rand::thread_rng());
@@ -134,7 +140,7 @@ fn internal_split_verified() {
     // 1000 keys > 253*2 ensures multi-level splitting.
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
     for i in 0..1000 {
         bt.insert(i * 2, (i * 7) as u64).unwrap();
     }
@@ -149,7 +155,7 @@ fn range_scan_with_random_keys() {
     use rand::seq::SliceRandom;
     let dir = temp_dir();
     let path = temp_path(&dir, "test.idx");
-    let mut bt = BTree::create(JsonBackend, &path).unwrap();
+    let mut bt = BTree::create(PageFile, &path).unwrap();
 
     let mut keys: Vec<i64> = (0..200).collect();
     keys.shuffle(&mut rand::thread_rng());

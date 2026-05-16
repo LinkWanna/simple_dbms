@@ -100,6 +100,20 @@ impl StorageBackend for JsonBackend {
         Ok(())
     }
 
+    fn read_rows_by_id<F>(&self, path: &Path, row_ids: &[u64], mut func: F) -> DbResult<()>
+    where
+        F: FnMut(&StoredRow) -> DbResult<()>,
+    {
+        use std::collections::HashSet;
+        let ids: HashSet<u64> = row_ids.iter().copied().collect();
+        self.scan_rows(path, |row| {
+            if ids.contains(&row.row_id) {
+                func(row)?;
+            }
+            Ok(())
+        })
+    }
+
     // ── File-system helpers ───────────────────────────────────────
 
     fn create_file(&self, path: &Path) -> DbResult<()> {

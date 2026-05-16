@@ -1,5 +1,6 @@
 use pesqlite::{CreateIndex, DropIndex, SchemaObject};
 
+use crate::engine::value_to_key;
 use crate::error::{DbError, DbResult};
 use crate::schema::{IndexSchema, Value};
 
@@ -7,24 +8,6 @@ use super::{Engine, ExecutionResult};
 
 /// Hash a cell value into an `i64` key suitable for B-Tree indexing.
 ///
-/// Collisions are possible for STRING values (via djb2).  The index
-/// lookup returns a `row_id`; the caller must still verify the column
-/// value matches by reading the actual row.
-fn value_to_key(v: &Value) -> i64 {
-    match v {
-        Value::Int(i) => *i,
-        Value::Float(f) => f64::to_bits(*f) as i64,
-        Value::Str(s) => {
-            let mut h: u64 = 5381;
-            for b in s.bytes() {
-                h = h.wrapping_mul(33).wrapping_add(b as u64);
-            }
-            h as i64
-        }
-        Value::Null => 0,
-    }
-}
-
 impl Engine {
     // ── CREATE INDEX ─────────────────────────────────────────────────
 

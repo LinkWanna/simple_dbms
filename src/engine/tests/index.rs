@@ -1,4 +1,5 @@
 use super::{assert_message, empty_context};
+use crate::engine::ExecutionResult;
 
 // ── CREATE INDEX ────────────────────────────────────────────────────
 
@@ -166,4 +167,126 @@ fn create_index_multi_column_rejected() {
         .execute("CREATE INDEX idx1 ON users (id, name)")
         .unwrap_err();
     assert!(matches!(err, crate::error::DbError::Syntax(_)));
+}
+
+// ── Index-accelerated SELECT ───────────────────────────────────────
+
+#[test]
+fn select_uses_index_on_equality_int() {
+    let mut ctx = empty_context();
+    ctx.engine
+        .execute("CREATE TABLE users (id INT, name VARCHAR(10))")
+        .unwrap();
+    ctx.engine
+        .execute("INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')")
+        .unwrap();
+    ctx.engine
+        .execute("CREATE INDEX idx_id ON users (id)")
+        .unwrap();
+
+    let result = ctx.engine.execute("SELECT * FROM users WHERE id = 2").unwrap();
+    match result {
+        ExecutionResult::Rows { columns, rows } => {
+            assert_eq!(columns, vec!["id", "name"]);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0][0], crate::schema::Value::Int(2));
+        }
+        other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_uses_index_on_equality_str() {
+    let mut ctx = empty_context();
+    ctx.engine
+        .execute("CREATE TABLE users (id INT, name VARCHAR(10))")
+        .unwrap();
+    ctx.engine
+        .execute("INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')")
+        .unwrap();
+    ctx.engine
+        .execute("CREATE INDEX idx_name ON users (name)")
+        .unwrap();
+
+    let result = ctx
+        .engine
+        .execute("SELECT * FROM users WHERE name = 'bob'")
+        .unwrap();
+    match result {
+        ExecutionResult::Rows { rows, .. } => {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0][1], crate::schema::Value::Str("bob".into()));
+        }
+        other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_falls_back_to_scan_without_index() {
+    let mut ctx = empty_context();
+    ctx.engine
+        .execute("CREATE TABLE users (id INT, name VARCHAR(10))")
+        .unwrap();
+    ctx.engine
+        .execute("INSERT INTO users VALUES (1, 'alice'), (2, 'bob')")
+        .unwrap();
+    // No index — full scan still works.
+    let result = ctx.engine.execute("SELECT * FROM users WHERE id = 1").unwrap();
+    match result {
+        ExecutionResult::Rows { rows, .. } => {
+            assert_eq!(rows.len(), 1);
+        }
+        other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_index_on_non_matching_value_returns_empty() {
+    let mut ctx = empty_context();
+    ctx.engine
+        .execute("CREATE TABLE users (id INT, name VARCHAR(10))")
+        .unwrap();
+    ctx.engine
+        .execute("INSERT INTO users VALUES (1, 'alice'), (2, 'bob')")
+        .unwrap();
+    ctx.engine
+        .execute("CREATE INDEX idx_id ON users (id)")
+        .unwrap();
+
+    let result = ctx
+        .engine
+        .execute("SELECT * FROM users WHERE id = 999")
+        .unwrap();
+    match result {
+        ExecutionResult::Rows { rows, .. } => {
+            assert_eq!(rows.len(), 0);
+        }
+        other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_index_acceleration_does_not_break_compound_where() {
+    let mut ctx = empty_context();
+    ctx.engine
+        .execute("CREATE TABLE users (id INT, name VARCHAR(10))")
+        .unwrap();
+    ctx.engine
+        .execute("INSERT INTO users VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')")
+        .unwrap();
+    ctx.engine
+        .execute("CREATE INDEX idx_id ON users (id)")
+        .unwrap();
+
+    // Compound WHERE — index narrows candidates, full filter verifies.
+    let result = ctx
+        .engine
+        .execute("SELECT * FROM users WHERE id = 2 AND name = 'bob'")
+        .unwrap();
+    match result {
+        ExecutionResult::Rows { rows, .. } => {
+            assert_eq!(rows.len(), 1);
+        }
+        other => panic!("expected Rows, got {other:?}"),
+    }
 }

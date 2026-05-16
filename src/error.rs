@@ -14,9 +14,9 @@ pub enum DbError {
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
 
-    /// JSON (de)serialization error.
+    /// Serialization / deserialization error.
     #[error("Serialization error: {0}")]
-    Serde(#[from] serde_json::Error),
+    Serialization(String),
 
     /// Generic syntax/parse error.
     #[error("Syntax error: {0}")]
@@ -71,5 +71,12 @@ impl DbError {
     /// Helper to construct a syntax error.
     pub fn syntax<S: Into<String>>(msg: S) -> Self {
         DbError::Syntax(msg.into())
+    }
+}
+
+#[cfg(feature = "json")]
+impl From<serde_json::Error> for DbError {
+    fn from(e: serde_json::Error) -> Self {
+        DbError::Serialization(e.to_string())
     }
 }

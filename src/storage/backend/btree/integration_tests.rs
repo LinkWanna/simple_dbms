@@ -2,7 +2,7 @@
 //! storage facade works correctly with the B-Tree backend.
 
 use crate::error::DbError;
-use crate::storage::backend::BTreeBackend;
+use crate::storage::BTreeBackend;
 use crate::storage::{StorageImpl, StoredRow};
 use tempfile::TempDir;
 

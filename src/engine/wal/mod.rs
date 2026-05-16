@@ -1,13 +1,16 @@
 mod row;
 mod table;
+#[cfg(not(feature = "json"))]
+mod wal_binary;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "json")]
 use serde::{Deserialize, Serialize};
 
-use crate::error::DbResult;
+use crate::error::{DbError, DbResult};
 use crate::schema::{DatabaseSchema, Value};
 use crate::storage::StoredRow;
 
@@ -19,7 +22,8 @@ use crate::storage::StoredRow;
 ///
 /// Records are appended as JSON Lines and replayed in reverse order during
 /// rollback or startup recovery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 pub enum WalRecord {
     /// Undo for appending one row to a table.
     ///
@@ -99,6 +103,7 @@ impl Wal {
     }
 
     /// Append one undo record to the WAL.
+    #[cfg(feature = "json")]
     pub fn append(&self, record: &WalRecord) -> DbResult<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
@@ -108,14 +113,33 @@ impl Wal {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        let line = serde_json::to_string(record)?;
+        let line = serde_json::to_string(record).map_err(|e| DbError::Serialization(e.to_string()))?;
         file.write_all(line.as_bytes())?;
         file.write_all(b"\n")?;
         file.flush()?;
         Ok(())
     }
 
+    #[cfg(not(feature = "json"))]
+    pub fn append(&self, record: &WalRecord) -> DbResult<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let data = wal_binary::serialize_wal(record).map_err(|e| DbError::Io(e))?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        // Length-prefixed binary record
+        file.write_all(&(data.len() as u32).to_le_bytes())?;
+        file.write_all(&data)?;
+        file.flush()?;
+        Ok(())
+    }
+
     /// Load all records from the WAL in append order.
+    #[cfg(feature = "json")]
     pub fn load_records(&self) -> DbResult<Vec<WalRecord>> {
         if !self.path.exists() {
             return Ok(Vec::new());
@@ -130,7 +154,30 @@ impl Wal {
             if line.trim().is_empty() {
                 continue;
             }
-            records.push(serde_json::from_str(&line)?);
+            records.push(serde_json::from_str(&line).map_err(|e| DbError::Serialization(e.to_string()))?);
+        }
+
+        Ok(records)
+    }
+
+    #[cfg(not(feature = "json"))]
+    pub fn load_records(&self) -> DbResult<Vec<WalRecord>> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let data = std::fs::read(&self.path)?;
+        let mut records = Vec::new();
+        let mut pos = 0;
+
+        while pos + 4 <= data.len() {
+            let len = u32::from_le_bytes(data[pos..pos+4].try_into().unwrap()) as usize;
+            pos += 4;
+            if pos + len > data.len() {
+                break;
+            }
+            records.push(wal_binary::deserialize_wal(&data[pos..pos+len])?);
+            pos += len;
         }
 
         Ok(records)

@@ -4,26 +4,22 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{DbError, DbResult};
 use crate::schema::DatabaseSchema;
+use crate::storage::backend::Backend;
 
 use self::backend::StorageBackend;
 
-// Internal imports for index operations (engine never sees these).
-use self::backend::{BTree, JsonBackend};
+// JsonBackend is always available (page I/O for BTreeBackend).
+#[cfg(feature = "btree")]
+use self::backend::PageFile;
+#[cfg(feature = "btree")]
+use self::backend::BTree;
 
 // Re-export for external consumers (engine, wal).
 pub use self::backend::StoredRow;
-
-cfg_select! {
-    feature = "btree" => {
-        pub use self::backend::BTreeBackend as Backend;
-    }
-    feature = "json" => {
-        pub use self::backend::JsonBackend as Backend;
-    }
-    _ => {
-        compile_error!("At least one storage backend feature must be enabled: 'btree' or 'json'");
-    }
-}
+#[cfg(feature = "btree")]
+pub use self::backend::BTreeBackend;
+#[cfg(feature = "btree")]
+pub use self::backend::schema_binary;
 
 /// Default storage type: JSON backend.
 pub type Storage = StorageImpl<Backend>;
@@ -133,6 +129,25 @@ impl<B: StorageBackend + Default> StorageImpl<B> {
         self.backend.scan_rows(&path, |row| func(row))
     }
 
+    /// Read specific rows identified by their internal `row_id`s.
+    ///
+    /// The backend chooses the most efficient strategy: random access
+    /// (B-Tree) or filtered full scan (JSONL).  Only matching rows
+    /// are passed to `func`.
+    pub(crate) fn read_rows_by_id<F>(
+        &self,
+        table: &str,
+        row_ids: &[u64],
+        mut func: F,
+    ) -> DbResult<()>
+    where
+        F: FnMut(&StoredRow) -> DbResult<()>,
+    {
+        self.ensure_table_exists(table)?;
+        let path = self.backend.table_path(&self.root, table);
+        self.backend.read_rows_by_id(&path, row_ids, |row| func(row))
+    }
+
     /// Append one already-prepared stored row to a table file.
     pub fn append_stored_row(&self, table: &str, row: &StoredRow) -> DbResult<()> {
         self.ensure_table_exists(table)?;
@@ -172,18 +187,20 @@ impl<B: StorageBackend + Default> StorageImpl<B> {
         self.backend.index_path(&self.root, index_name)
     }
 
-    // ── Index operations ──────────────────────────────────────────────
+    // ── Index operations (btree feature only) ──────────────────────────
 
     /// Create an empty B-Tree index file.
+    #[cfg(feature = "btree")]
     pub(crate) fn create_index_file(&self, index_name: &str) -> DbResult<()> {
         let path = self.index_path(index_name);
         if self.backend.file_exists(&path) {
             return Err(DbError::IndexExists(index_name.to_string()));
         }
-        BTree::create(JsonBackend, &path)?;
+        BTree::create(PageFile, &path)?;
         Ok(())
     }
 
+    #[cfg(feature = "btree")]
     /// Delete an index file if it exists.
     pub(crate) fn remove_index_file(&self, index_name: &str) -> DbResult<()> {
         let path = self.index_path(index_name);
@@ -193,12 +210,23 @@ impl<B: StorageBackend + Default> StorageImpl<B> {
         Ok(())
     }
 
+    #[cfg(feature = "btree")]
     /// Insert a (key, row_id) pair into the named index.
     ///
     /// The index file must already exist (created via [`create_index_file`]).
     pub(crate) fn index_insert(&self, index_name: &str, key: i64, row_id: u64) -> DbResult<()> {
         let path = self.index_path(index_name);
-        let mut idx = BTree::open(JsonBackend, &path)?;
+        let mut idx = BTree::open(PageFile, &path)?;
         idx.insert(key, row_id)
+    }
+
+    #[cfg(feature = "btree")]
+    /// Return all `row_id`s for the given key in the named index.
+    ///
+    /// Returns an empty `Vec` if the key has no entries.
+    pub(crate) fn index_range_scan(&self, index_name: &str, key: i64) -> DbResult<Vec<u64>> {
+        let path = self.index_path(index_name);
+        let idx = BTree::open(PageFile, &path)?;
+        idx.range_scan(key, key)
     }
 }

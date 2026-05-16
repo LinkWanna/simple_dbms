@@ -12,6 +12,9 @@ mod constraints;
 mod create_table;
 mod delete;
 mod drop_table;
+mod value_key;
+pub use value_key::value_to_key;
+#[cfg(feature = "btree")]
 mod index;
 mod insert;
 mod select;
@@ -75,12 +78,18 @@ impl Engine {
             Stmt::Update(update) => self.execute_update(update),
             Stmt::Delete(delete) => self.execute_delete(delete),
             Stmt::CreateTable(create_table) => self.execute_create_table(create_table),
+            #[cfg(feature = "btree")]
             Stmt::CreateIndex(ci) => self.execute_create_index(ci),
+            #[cfg(not(feature = "btree"))]
+            Stmt::CreateIndex(_) => Err(DbError::syntax("CREATE INDEX requires the 'btree' feature. Rebuild with --features btree")),
             Stmt::CreateView(_) => Err(DbError::syntax("CREATE VIEW is not supported yet")),
             Stmt::CreateTrigger(_) => Err(DbError::syntax("CREATE TRIGGER is not supported yet")),
             Stmt::AlterTable(alter_table) => self.execute_alter_table(alter_table),
             Stmt::DropTable(drop_table) => self.execute_drop_table(drop_table),
+            #[cfg(feature = "btree")]
             Stmt::DropIndex(di) => self.execute_drop_index(di),
+            #[cfg(not(feature = "btree"))]
+            Stmt::DropIndex(_) => Err(DbError::syntax("DROP INDEX requires the 'btree' feature. Rebuild with --features btree")),
             Stmt::DropView(_) => Err(DbError::syntax("DROP VIEW is not supported yet")),
             Stmt::DropTrigger(_) => Err(DbError::syntax("DROP TRIGGER is not supported yet")),
             Stmt::Begin(begin) => self.execute_begin(begin),

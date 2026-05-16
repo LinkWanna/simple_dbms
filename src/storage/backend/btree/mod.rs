@@ -10,6 +10,12 @@
 //!   `<table>.dat` — length-prefixed JSON rows
 
 pub mod layout;
+pub(crate) mod page_file;
+mod row_binary;
+pub mod schema_binary;
+use page_file::PageFile;
+use row_binary::{append_row_to_dat, read_row_at};
+use schema_binary::{deserialize_schema, serialize_schema};
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -19,7 +25,7 @@ use crate::error::{DbError, DbResult};
 use crate::schema::DatabaseSchema;
 
 use self::layout::{Entry, LEAF, MIN_ENTRIES, PAGE_SIZE, Page};
-use super::{JsonBackend, PageStorage, StorageBackend, StoredRow};
+use super::{PageStorage, StorageBackend, StoredRow};
 
 // ═══════════════════════════════════════════════════════════════════════
 //  B-Tree index data structure
@@ -179,9 +185,6 @@ impl<B: PageStorage + StorageBackend> BTree<B> {
     ) -> DbResult<Option<SplitResult>> {
         let mut page = self.read_page(page_num)?;
         if page.page_type == LEAF {
-            if page.entries.iter().any(|e| e.key() == key) {
-                return Err(DbError::syntax(format!("duplicate key {key} in B-Tree")));
-            }
             page.entries.push(Entry::Leaf { key, row_id: value });
             page.entries.sort_by_key(|e| e.key());
             if !page.is_full() {
@@ -382,13 +385,20 @@ impl<B: PageStorage + StorageBackend> BTree<B> {
 //  BTree Backend — StorageBackend implementation
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Backend that stores table rows in a B-Tree index + companion data file.
+/// Backend that stores table rows in a B-Tree index + companion data file,
 ///
 /// Per-table layout (using `<table>.btree` as base path):
 ///   `<table>.idx` — B-Tree: key=row_id (i64), value=offset in .dat
 ///   `<table>.dat` — length-prefixed JSON rows
 ///
-/// The internal page-level I/O for the B-tree is delegated to [JsonBackend].
+/// page-level I/O implementation for the B-Tree index files.
+/// Backend that stores table rows in a B-Tree index + companion binary data file.
+///
+/// Per-table layout (using `<table>.btree` as base path):
+///   `<table>.idx` — B-Tree: key=row_id (i64), value=offset in .dat
+///   `<table>.dat` — binary rows (see `layout.md`)
+///
+/// All I/O is self-contained — no dependency on other backends.
 #[derive(Debug, Clone, Default)]
 pub struct BTreeBackend;
 
@@ -407,39 +417,13 @@ impl BTreeBackend {
     }
 
     /// Open the B-tree index for a table.
-    fn open_index(&self, table_path: &Path) -> DbResult<BTree<JsonBackend>> {
+    fn open_index(&self, table_path: &Path) -> DbResult<BTree<PageFile>> {
         let idx = Self::idx_path(table_path);
-        if JsonBackend.file_exists(&idx) {
-            BTree::open(JsonBackend, &idx)
+        if idx.exists() {
+            BTree::open(PageFile, &idx)
         } else {
-            BTree::create(JsonBackend, &idx)
+            BTree::create(PageFile, &idx)
         }
-    }
-
-    /// Read a StoredRow from the data file at the given offset.
-    fn read_row_at(dat_path: &Path, offset: u64) -> DbResult<StoredRow> {
-        let mut file = File::open(dat_path)?;
-        file.seek(SeekFrom::Start(offset))?;
-        let mut len_buf = [0u8; 4];
-        file.read_exact(&mut len_buf)?;
-        let len = u32::from_le_bytes(len_buf) as usize;
-        let mut json_buf = vec![0u8; len];
-        file.read_exact(&mut json_buf)?;
-        Ok(serde_json::from_slice(&json_buf)?)
-    }
-
-    /// Append a StoredRow to the data file, return its offset.
-    fn append_row_to_dat(dat_path: &Path, row: &StoredRow) -> DbResult<u64> {
-        let json = serde_json::to_vec(row)?;
-        let len = json.len() as u32;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dat_path)?;
-        let offset = file.seek(SeekFrom::End(0))?;
-        file.write_all(&len.to_le_bytes())?;
-        file.write_all(&json)?;
-        Ok(offset)
     }
 }
 
@@ -455,15 +439,18 @@ impl StorageBackend for BTreeBackend {
     }
 
     fn index_path(&self, root: &Path, index_name: &str) -> PathBuf {
-        JsonBackend.index_path(root, index_name)
+        root.join(format!("idx_{}.ndx", index_name))
     }
 
     fn load_schema(&self, path: &Path) -> DbResult<DatabaseSchema> {
-        JsonBackend.load_schema(path)
+        let data = std::fs::read(path)?;
+        deserialize_schema(&data)
     }
 
     fn save_schema(&self, path: &Path, schema: &DatabaseSchema) -> DbResult<()> {
-        JsonBackend.save_schema(path, schema)
+        let data = serialize_schema(schema).map_err(|e| DbError::Io(e))?;
+        std::fs::write(path, &data)?;
+        Ok(())
     }
 
     fn scan_rows<F>(&self, table_path: &Path, mut func: F) -> DbResult<()>
@@ -472,20 +459,20 @@ impl StorageBackend for BTreeBackend {
     {
         let idx = self.open_index(table_path)?;
         let dat = Self::dat_path(table_path);
-        if !JsonBackend.file_exists(&dat) {
+        if !dat.exists() {
             return Ok(());
         }
 
         let offsets = idx.range_scan(i64::MIN, i64::MAX)?;
         for offset in offsets {
-            let row = Self::read_row_at(&dat, offset)?;
+            let row = read_row_at(&dat, offset)?;
             func(&row)?;
         }
         Ok(())
     }
 
     fn append_row(&self, table_path: &Path, row: &StoredRow) -> DbResult<()> {
-        let offset = Self::append_row_to_dat(&Self::dat_path(table_path), row)?;
+        let offset = append_row_to_dat(&Self::dat_path(table_path), row)?;
         let mut idx = self.open_index(table_path)?;
         idx.insert(row.row_id as i64, offset)
     }
@@ -500,23 +487,39 @@ impl StorageBackend for BTreeBackend {
         let tmp_idx = idx_path.with_extension("idx.tmp");
         let tmp_dat = dat_path.with_extension("dat.tmp");
 
-        let mut idx = BTree::create(JsonBackend, &tmp_idx)?;
+        let mut idx = BTree::create(PageFile, &tmp_idx)?;
         // Always create the data file, even for empty tables.
-        JsonBackend.create_file(&tmp_dat)?;
+        std::fs::File::create(&tmp_dat)?;
         for row in rows {
-            let offset = Self::append_row_to_dat(&tmp_dat, row)?;
+            let offset = append_row_to_dat(&tmp_dat, row)?;
             idx.insert(row.row_id as i64, offset)?;
         }
 
         // Atomically swap temps over originals.
-        JsonBackend.rename_file(&tmp_idx, &idx_path)?;
-        JsonBackend.rename_file(&tmp_dat, &dat_path)?;
+        std::fs::rename(&tmp_idx, &idx_path)?;
+        Ok::<(), crate::error::DbError>(())?;
+        std::fs::rename(&tmp_dat, &dat_path)?;
+        Ok(())
+    }
+
+    fn read_rows_by_id<F>(&self, table_path: &Path, row_ids: &[u64], mut func: F) -> DbResult<()>
+    where
+        F: FnMut(&StoredRow) -> DbResult<()>,
+    {
+        let idx = self.open_index(table_path)?;
+        let dat = Self::dat_path(table_path);
+        for &rid in row_ids {
+            if let Some(offset) = idx.search(rid as i64)? {
+                let row = read_row_at(&dat, offset)?;
+                func(&row)?;
+            }
+        }
         Ok(())
     }
 
     fn create_file(&self, path: &Path) -> DbResult<()> {
         let idx_path = Self::idx_path(path);
-        BTree::create(JsonBackend, &idx_path)?;
+        BTree::create(PageFile, &idx_path)?;
         File::create(Self::dat_path(path))?;
         Ok(())
     }
@@ -525,37 +528,39 @@ impl StorageBackend for BTreeBackend {
         if Self::is_table_path(path) {
             let idx = Self::idx_path(path);
             let dat = Self::dat_path(path);
-            if JsonBackend.file_exists(&idx) {
-                JsonBackend.remove_file(&idx)?;
+            if idx.exists() {
+                std::fs::remove_file(&idx)?;
             }
-            if JsonBackend.file_exists(&dat) {
-                JsonBackend.remove_file(&dat)?;
+            if dat.exists() {
+                std::fs::remove_file(&dat)?;
             }
         } else {
-            JsonBackend.remove_file(path)?;
+            std::fs::remove_file(path)?;
         }
         Ok(())
     }
 
     fn rename_file(&self, from: &Path, to: &Path) -> DbResult<()> {
         if Self::is_table_path(from) && Self::is_table_path(to) {
-            JsonBackend.rename_file(&Self::idx_path(from), &Self::idx_path(to))?;
-            JsonBackend.rename_file(&Self::dat_path(from), &Self::dat_path(to))
+            std::fs::rename(&Self::idx_path(from), &Self::idx_path(to))?;
+            std::fs::rename(&Self::dat_path(from), &Self::dat_path(to))?;
         } else {
-            JsonBackend.rename_file(from, to)
+            std::fs::rename(from, to)?;
         }
+        Ok(())
     }
 
-    fn file_exists(&self, path: &Path) -> bool {
-        if Self::is_table_path(path) {
-            JsonBackend.file_exists(&Self::idx_path(path))
+    fn file_exists(&self, p: &Path) -> bool {
+        if Self::is_table_path(p) {
+            Self::idx_path(p).exists()
         } else {
-            JsonBackend.file_exists(path)
+            p.exists()
         }
     }
 
     fn create_dir_all(&self, path: &Path) -> DbResult<()> {
-        JsonBackend.create_dir_all(path)
+        std::fs::create_dir_all(path)?;
+        Ok(())
     }
 }
 

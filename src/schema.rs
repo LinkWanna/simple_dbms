@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+#[cfg(feature = "json")]
 use serde::{Deserialize, Serialize};
 
 use crate::error::{DbError, DbResult};
 
 /// Runtime value representation for a single cell.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -26,7 +28,8 @@ impl Value {
 }
 
 /// Supported column types in the mini-DBMS.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 pub enum ColumnType {
     Int,
     Float,
@@ -46,7 +49,8 @@ impl ColumnType {
 }
 
 /// Schema definition for a single column.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 pub struct ColumnSchema {
     pub name: String,
     pub col_type: ColumnType,
@@ -81,7 +85,8 @@ impl ColumnSchema {
 }
 
 /// Schema definition for a table (name + ordered columns).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 pub struct TableSchema {
     pub name: String,
     pub columns: Vec<ColumnSchema>,
@@ -217,7 +222,8 @@ impl TableSchema {
 }
 
 /// Schema definition for a user-created index.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 pub struct IndexSchema {
     pub name: String,
     pub table_name: String,
@@ -225,7 +231,8 @@ pub struct IndexSchema {
 }
 
 /// Schema definition for a database (name + table map + index map).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 pub struct DatabaseSchema {
     pub name: String,
     pub tables: HashMap<String, TableSchema>,
