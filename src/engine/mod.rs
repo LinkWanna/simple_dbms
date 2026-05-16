@@ -237,7 +237,7 @@ impl Engine {
             WalRecord::DropTableFile { table } => self.drop_table_file_if_exists(&table),
             WalRecord::RestoreTableFile { table, rows } => self.restore_table_file(&table, &rows),
             WalRecord::RenameTable { old_name, new_name } => {
-                self.storage.rename_table(&new_name, &old_name)
+                self.rename_table(&new_name, &old_name)
             }
         }
     }

@@ -7,6 +7,35 @@ use crate::wal::WalRecord;
 use super::{Engine, ExecutionResult};
 
 impl Engine {
+    // ── Low-level compound operation ──────────────────────────────────
+
+    /// Create a new table: empty data file + schema entry, atomically.
+    pub(super) fn create_table(&self, table: TableSchema) -> DbResult<()> {
+        let table_name = table.name.clone();
+        if self.storage.table_file_exists(&table_name) {
+            return Err(DbError::TableExists(table_name));
+        }
+
+        self.storage.create_table_file(&table_name)?;
+
+        let schema_result = {
+            let mut schema = self.storage.load_schema()?;
+            if schema.tables.contains_key(&table_name) {
+                return Err(DbError::TableExists(table_name));
+            }
+            schema.add_table(table)?;
+            self.storage.save_schema(&schema)
+        };
+
+        if let Err(error) = schema_result {
+            let _ = self.storage.remove_table_file(&table_name);
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    // ── SQL executor ──────────────────────────────────────────────────
     /// Execute `CREATE TABLE`.
     pub(super) fn execute_create_table(
         &mut self,
@@ -38,7 +67,7 @@ impl Engine {
             })?;
         }
 
-        self.storage.create_table(schema)?;
+        self.create_table(schema)?;
 
         Ok(ExecutionResult::Message(format!(
             "Table '{table_name}' created"

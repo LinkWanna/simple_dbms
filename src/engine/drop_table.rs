@@ -1,8 +1,29 @@
 use crate::engine::{Engine, ExecutionResult};
-use crate::error::DbResult;
+use crate::error::{DbError, DbResult};
 use crate::wal::WalRecord;
 
 impl Engine {
+    // ── Low-level compound operation ──────────────────────────────────
+
+    /// Drop an existing table: data file + schema entry, atomically.
+    pub(super) fn drop_table(&self, table: &str, if_exists: bool) -> DbResult<()> {
+        if self.storage.table_file_exists(table) {
+            self.storage.remove_table_file(table)?;
+        } else if !if_exists {
+            return Err(DbError::TableNotFound(table.to_string()));
+        }
+
+        let mut schema = self.storage.load_schema()?;
+        if schema.tables.remove(table).is_none() {
+            if if_exists {
+                return Ok(());
+            }
+            return Err(DbError::TableNotFound(table.to_string()));
+        }
+        self.storage.save_schema(&schema)
+    }
+
+    // ── SQL executor ──────────────────────────────────────────────────
     /// Execute `DROP TABLE`.
     ///
     /// # Arguments
@@ -29,7 +50,7 @@ impl Engine {
             })?;
         }
 
-        self.storage.drop_table(&table_name, drop_table.if_exists)?;
+        self.drop_table(&table_name, drop_table.if_exists)?;
 
         Ok(ExecutionResult::Message(format!(
             "Table '{table_name}' dropped"

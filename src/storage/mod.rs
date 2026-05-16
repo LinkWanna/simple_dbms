@@ -3,7 +3,7 @@ mod backend;
 use std::path::{Path, PathBuf};
 
 use crate::error::{DbError, DbResult};
-use crate::schema::{DatabaseSchema, TableSchema};
+use crate::schema::DatabaseSchema;
 
 use self::backend::StorageBackend;
 
@@ -25,12 +25,12 @@ cfg_select! {
 /// Default storage type: JSON backend.
 pub type Storage = StorageImpl<Backend>;
 
-/// Storage facade that composes a [StorageBackend] with coordination logic.
+/// Storage facade that wraps a [StorageBackend] with convenience helpers.
 ///
 /// The backend handles format-specific I/O and path conventions.  The facade
-/// adds atomic composite operations (`create_table`, `drop_table`,
-/// `rename_table`) that keep the schema entry and data file in sync, plus
-/// convenience helpers for the engine.
+/// exposes schema load/save, row I/O, and lower-level file helpers.
+/// Atomic composite operations (`create_table`, `drop_table`, `rename_table`)
+/// that need to coordinate schema + data file belong to the engine layer.
 ///
 /// The storage layer does **not** perform schema-aware validation or constraint
 /// enforcement — those belong to the engine.
@@ -70,87 +70,33 @@ impl<B: StorageBackend + Default> StorageImpl<B> {
         self.backend.save_schema(&path, schema)
     }
 
-    // ── Compound table operations (file + schema atomically) ─────────
+    // ── Table file helpers (engine uses these to build compound ops) ──
 
-    /// Create a new table: empty data file + schema entry, atomically.
-    pub fn create_table(&self, table: TableSchema) -> DbResult<()> {
-        let table_path = self.backend.table_path(&self.root, &table.name);
-        if self.backend.file_exists(&table_path) {
-            return Err(DbError::TableExists(table.name));
-        }
-
-        self.backend.create_file(&table_path)?;
-
-        let schema_result = {
-            let mut schema = self.load_schema()?;
-            if schema.tables.contains_key(&table.name) {
-                return Err(DbError::TableExists(table.name.clone()));
-            }
-            schema.add_table(table.clone())?;
-            self.save_schema(&schema)
-        };
-
-        if let Err(error) = schema_result {
-            let _ = self.backend.remove_file(&table_path);
-            return Err(error);
-        }
-
-        Ok(())
+    /// Returns `true` if a table data file exists for `table`.
+    pub(crate) fn table_file_exists(&self, table: &str) -> bool {
+        let path = self.backend.table_path(&self.root, table);
+        self.backend.file_exists(&path)
     }
 
-    /// Drop an existing table: data file + schema entry, atomically.
-    pub fn drop_table(&self, table: &str, if_exists: bool) -> DbResult<()> {
-        let table_path = self.backend.table_path(&self.root, table);
-        if self.backend.file_exists(&table_path) {
-            self.backend.remove_file(&table_path)?;
-        } else if !if_exists {
-            return Err(DbError::TableNotFound(table.to_string()));
-        }
-
-        let mut schema = self.load_schema()?;
-        if schema.tables.remove(table).is_none() {
-            if if_exists {
-                return Ok(());
-            }
-            return Err(DbError::TableNotFound(table.to_string()));
-        }
-        self.save_schema(&schema)
+    /// Create an empty table data file.
+    pub(crate) fn create_table_file(&self, table: &str) -> DbResult<()> {
+        let path = self.backend.table_path(&self.root, table);
+        self.backend.create_file(&path)
     }
 
-    /// Rename an existing table: data file + schema entry, atomically.
-    pub fn rename_table(&self, old_name: &str, new_name: &str) -> DbResult<()> {
+    /// Remove a table data file.
+    ///
+    /// Returns an error if the file does not exist.
+    pub(crate) fn remove_table_file(&self, table: &str) -> DbResult<()> {
+        let path = self.backend.table_path(&self.root, table);
+        self.backend.remove_file(&path)
+    }
+
+    /// Atomically rename a table data file from `old_name` to `new_name`.
+    pub(crate) fn rename_table_file(&self, old_name: &str, new_name: &str) -> DbResult<()> {
         let old_path = self.backend.table_path(&self.root, old_name);
-        if !self.backend.file_exists(&old_path) {
-            return Err(DbError::TableNotFound(old_name.to_string()));
-        }
-
         let new_path = self.backend.table_path(&self.root, new_name);
-        if self.backend.file_exists(&new_path) {
-            return Err(DbError::TableExists(new_name.to_string()));
-        }
-
-        self.backend.rename_file(&old_path, &new_path)?;
-
-        let schema_result = {
-            let mut schema = self.load_schema()?;
-            if schema.tables.contains_key(new_name) {
-                return Err(DbError::TableExists(new_name.to_string()));
-            }
-            let mut table_schema = schema
-                .tables
-                .remove(old_name)
-                .ok_or_else(|| DbError::TableNotFound(old_name.to_string()))?;
-            table_schema.name = new_name.to_string();
-            schema.tables.insert(new_name.to_string(), table_schema);
-            self.save_schema(&schema)
-        };
-
-        if let Err(error) = schema_result {
-            let _ = self.backend.rename_file(&new_path, &old_path);
-            return Err(error);
-        }
-
-        Ok(())
+        self.backend.rename_file(&old_path, &new_path)
     }
 
     // ── Row I/O (table data files) ──────────────────────────────────

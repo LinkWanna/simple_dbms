@@ -112,8 +112,6 @@ pub trait StorageBackend {
     }
 }
 
-// ── JSON backend ──────────────────────────────────────────────────────
-
 mod json;
 pub use json::JsonBackend;
 

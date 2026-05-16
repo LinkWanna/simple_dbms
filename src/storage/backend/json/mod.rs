@@ -137,10 +137,7 @@ impl StorageBackend for JsonBackend {
     }
 
     fn write_page(&self, path: &Path, page_num: u64, data: &[u8]) -> DbResult<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(path)?;
+        let mut file = OpenOptions::new().create(true).write(true).open(path)?;
         let offset = page_num * 4096;
         file.seek(SeekFrom::Start(offset))?;
         file.write_all(data)?;

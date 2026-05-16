@@ -5,6 +5,43 @@ use crate::storage::StoredRow;
 use crate::wal::WalRecord;
 
 impl Engine {
+    // ── Low-level compound operation ──────────────────────────────────
+
+    /// Rename an existing table: data file + schema entry, atomically.
+    pub(super) fn rename_table(&self, old_name: &str, new_name: &str) -> DbResult<()> {
+        if !self.storage.table_file_exists(old_name) {
+            return Err(DbError::TableNotFound(old_name.to_string()));
+        }
+
+        if self.storage.table_file_exists(new_name) {
+            return Err(DbError::TableExists(new_name.to_string()));
+        }
+
+        self.storage.rename_table_file(old_name, new_name)?;
+
+        let schema_result = {
+            let mut schema = self.storage.load_schema()?;
+            if schema.tables.contains_key(new_name) {
+                return Err(DbError::TableExists(new_name.to_string()));
+            }
+            let mut table_schema = schema
+                .tables
+                .remove(old_name)
+                .ok_or_else(|| DbError::TableNotFound(old_name.to_string()))?;
+            table_schema.name = new_name.to_string();
+            schema.tables.insert(new_name.to_string(), table_schema);
+            self.storage.save_schema(&schema)
+        };
+
+        if let Err(error) = schema_result {
+            let _ = self.storage.rename_table_file(new_name, old_name);
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    // ── SQL executor ──────────────────────────────────────────────────
     /// Execute `ALTER TABLE`.
     ///
     /// Supported subset:
@@ -42,7 +79,7 @@ impl Engine {
                         .append(&WalRecord::ReplaceSchema { old_schema })?;
                 }
 
-                self.storage.rename_table(&table_name, &new_table_name)?;
+                self.rename_table(&table_name, &new_table_name)?;
                 Ok(ExecutionResult::Message(format!(
                     "Table '{table_name}' renamed to '{new_table_name}'"
                 )))
