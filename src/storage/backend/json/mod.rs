@@ -37,6 +37,10 @@ impl StorageBackend for JsonBackend {
         root.join(format!("{table}.jsonl"))
     }
 
+    fn index_path(&self, root: &Path, index_name: &str) -> PathBuf {
+        root.join(format!("idx_{index_name}.ndx"))
+    }
+
     // ── Schema I/O ────────────────────────────────────────────────
 
     fn load_schema(&self, path: &Path) -> DbResult<DatabaseSchema> {

@@ -1,9 +1,11 @@
 use tempfile::TempDir;
 
-use crate::storage::backend::JsonBackend;
 use super::BTree;
+use crate::storage::backend::JsonBackend;
 
-fn temp_dir() -> TempDir { TempDir::new().unwrap() }
+fn temp_dir() -> TempDir {
+    TempDir::new().unwrap()
+}
 
 fn temp_path(dir: &TempDir, name: &str) -> std::path::PathBuf {
     dir.path().join(name)

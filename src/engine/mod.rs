@@ -12,6 +12,7 @@ mod constraints;
 mod create_table;
 mod delete;
 mod drop_table;
+mod index;
 mod insert;
 mod select;
 mod transaction;
@@ -74,12 +75,12 @@ impl Engine {
             Stmt::Update(update) => self.execute_update(update),
             Stmt::Delete(delete) => self.execute_delete(delete),
             Stmt::CreateTable(create_table) => self.execute_create_table(create_table),
-            Stmt::CreateIndex(_) => Err(DbError::syntax("CREATE INDEX is not supported yet")),
+            Stmt::CreateIndex(ci) => self.execute_create_index(ci),
             Stmt::CreateView(_) => Err(DbError::syntax("CREATE VIEW is not supported yet")),
             Stmt::CreateTrigger(_) => Err(DbError::syntax("CREATE TRIGGER is not supported yet")),
             Stmt::AlterTable(alter_table) => self.execute_alter_table(alter_table),
             Stmt::DropTable(drop_table) => self.execute_drop_table(drop_table),
-            Stmt::DropIndex(_) => Err(DbError::syntax("DROP INDEX is not supported yet")),
+            Stmt::DropIndex(di) => self.execute_drop_index(di),
             Stmt::DropView(_) => Err(DbError::syntax("DROP VIEW is not supported yet")),
             Stmt::DropTrigger(_) => Err(DbError::syntax("DROP TRIGGER is not supported yet")),
             Stmt::Begin(begin) => self.execute_begin(begin),

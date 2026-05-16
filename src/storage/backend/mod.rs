@@ -40,6 +40,9 @@ pub trait StorageBackend {
     /// Absolute path to the table data file for `table` under `root`.
     fn table_path(&self, root: &Path, table: &str) -> PathBuf;
 
+    /// Absolute path to an index file for `index_name` under `root`.
+    fn index_path(&self, root: &Path, index_name: &str) -> PathBuf;
+
     // ── Schema I/O ───────────────────────────────────────────────
 
     /// Deserialize schema metadata from the given file.
@@ -110,7 +113,7 @@ mod json;
 pub use json::JsonBackend;
 
 mod btree;
-pub use btree::BTreeBackend;
+pub use btree::{BTree, BTreeBackend};
 
 #[cfg(test)]
 mod tests;

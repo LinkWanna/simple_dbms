@@ -216,11 +216,20 @@ impl TableSchema {
     }
 }
 
-/// Schema definition for a database (name + table map).
+/// Schema definition for a user-created index.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IndexSchema {
+    pub name: String,
+    pub table_name: String,
+    pub column: String,
+}
+
+/// Schema definition for a database (name + table map + index map).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseSchema {
     pub name: String,
     pub tables: HashMap<String, TableSchema>,
+    pub indexes: HashMap<String, IndexSchema>,
 }
 
 impl DatabaseSchema {
@@ -229,6 +238,7 @@ impl DatabaseSchema {
         DatabaseSchema {
             name: name.into(),
             tables: HashMap::new(),
+            indexes: HashMap::new(),
         }
     }
 

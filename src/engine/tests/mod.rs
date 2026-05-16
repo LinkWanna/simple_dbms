@@ -2,6 +2,7 @@ mod alter_table;
 mod create_table;
 mod delete;
 mod drop_table;
+mod index;
 mod insert;
 mod select;
 mod transaction;

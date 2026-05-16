@@ -2,8 +2,8 @@
 //! storage facade works correctly with the B-Tree backend.
 
 use crate::error::DbError;
-use crate::storage::{StorageImpl, StoredRow};
 use crate::storage::backend::BTreeBackend;
+use crate::storage::{StorageImpl, StoredRow};
 use tempfile::TempDir;
 
 struct TestContext {
@@ -14,10 +14,7 @@ struct TestContext {
 fn temp_storage() -> TestContext {
     let dir = TempDir::new().unwrap();
     let storage = StorageImpl::new(dir.path()).unwrap();
-    TestContext {
-        _dir: dir,
-        storage,
-    }
+    TestContext { _dir: dir, storage }
 }
 
 /// Helper: create a test row with row_id and one Int value.

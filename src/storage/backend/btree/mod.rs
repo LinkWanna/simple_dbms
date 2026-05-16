@@ -39,7 +39,9 @@ impl Superblock {
 
     fn deserialize(data: &[u8]) -> DbResult<Self> {
         if data.len() < PAGE_SIZE || data[8] != 0x42 {
-            return Err(DbError::StorageCorruption("invalid B-Tree superblock".into()));
+            return Err(DbError::StorageCorruption(
+                "invalid B-Tree superblock".into(),
+            ));
         }
         let root_page = u64::from_le_bytes(data[0..8].try_into().unwrap());
         Ok(Superblock { root_page })
@@ -195,8 +197,14 @@ impl<B: PageStorage + StorageBackend> BTree<B> {
             let sep_key = right.entries[0].key();
             let sep_val = right.entries[0].row_id();
             page.entries.truncate(mid);
-            debug_assert!(page.entries.len() >= MIN_ENTRIES, "leaf left-page underflow after split");
-            debug_assert!(right.entries.len() >= MIN_ENTRIES, "leaf right-page underflow after split");
+            debug_assert!(
+                page.entries.len() >= MIN_ENTRIES,
+                "leaf left-page underflow after split"
+            );
+            debug_assert!(
+                right.entries.len() >= MIN_ENTRIES,
+                "leaf right-page underflow after split"
+            );
             self.write_page(page_num, &page)?;
             self.write_page(right_num, &right)?;
             return Ok(Some(SplitResult {
@@ -262,8 +270,14 @@ impl<B: PageStorage + StorageBackend> BTree<B> {
         };
         page.rightmost_child = lr;
         page.entries.truncate(mid);
-        debug_assert!(page.entries.len() >= MIN_ENTRIES, "internal left-page underflow after split");
-        debug_assert!(right.entries.len() >= MIN_ENTRIES, "internal right-page underflow after split");
+        debug_assert!(
+            page.entries.len() >= MIN_ENTRIES,
+            "internal left-page underflow after split"
+        );
+        debug_assert!(
+            right.entries.len() >= MIN_ENTRIES,
+            "internal right-page underflow after split"
+        );
         for e in &right.entries {
             if let Entry::Internal { left_child, .. } = e {
                 let mut cp = self.read_page(*left_child)?;
@@ -438,6 +452,10 @@ impl StorageBackend for BTreeBackend {
     }
     fn table_path(&self, root: &Path, table: &str) -> PathBuf {
         root.join(format!("{table}.btree"))
+    }
+
+    fn index_path(&self, root: &Path, index_name: &str) -> PathBuf {
+        JsonBackend.index_path(root, index_name)
     }
 
     fn load_schema(&self, path: &Path) -> DbResult<DatabaseSchema> {

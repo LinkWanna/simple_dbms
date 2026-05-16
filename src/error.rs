@@ -57,6 +57,14 @@ pub enum DbError {
     /// Storage corruption detected (invalid page format, bad magic, etc.).
     #[error("Storage corruption: {0}")]
     StorageCorruption(String),
+
+    /// Attempted to create an already existing index.
+    #[error("Index already exists: {0}")]
+    IndexExists(String),
+
+    /// Attempted to access or drop a non-existent index.
+    #[error("Index not found: {0}")]
+    IndexNotFound(String),
 }
 
 impl DbError {

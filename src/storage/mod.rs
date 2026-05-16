@@ -7,6 +7,9 @@ use crate::schema::DatabaseSchema;
 
 use self::backend::StorageBackend;
 
+// Internal imports for index operations (engine never sees these).
+use self::backend::{BTree, JsonBackend};
+
 // Re-export for external consumers (engine, wal).
 pub use self::backend::StoredRow;
 
@@ -163,5 +166,39 @@ impl<B: StorageBackend + Default> StorageImpl<B> {
 
     pub(crate) fn table_path(&self, table: &str) -> PathBuf {
         self.backend.table_path(&self.root, table)
+    }
+
+    pub(crate) fn index_path(&self, index_name: &str) -> PathBuf {
+        self.backend.index_path(&self.root, index_name)
+    }
+
+    // ── Index operations ──────────────────────────────────────────────
+
+    /// Create an empty B-Tree index file.
+    pub(crate) fn create_index_file(&self, index_name: &str) -> DbResult<()> {
+        let path = self.index_path(index_name);
+        if self.backend.file_exists(&path) {
+            return Err(DbError::IndexExists(index_name.to_string()));
+        }
+        BTree::create(JsonBackend, &path)?;
+        Ok(())
+    }
+
+    /// Delete an index file if it exists.
+    pub(crate) fn remove_index_file(&self, index_name: &str) -> DbResult<()> {
+        let path = self.index_path(index_name);
+        if self.backend.file_exists(&path) {
+            self.backend.remove_file(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Insert a (key, row_id) pair into the named index.
+    ///
+    /// The index file must already exist (created via [`create_index_file`]).
+    pub(crate) fn index_insert(&self, index_name: &str, key: i64, row_id: u64) -> DbResult<()> {
+        let path = self.index_path(index_name);
+        let mut idx = BTree::open(JsonBackend, &path)?;
+        idx.insert(key, row_id)
     }
 }
