@@ -9,6 +9,7 @@ use crate::storage::{Storage, StoredRow};
 use crate::wal::Wal;
 
 mod alter_table;
+mod constraints;
 mod create_table;
 mod delete;
 mod drop_table;
@@ -156,9 +157,9 @@ impl Engine {
         self.storage.ensure_table_exists(table)?;
 
         let existing_rows = self.storage.load_rows(table)?;
-        crate::constraints::validate_unique_append(table_schema, &existing_rows, row)?;
+        constraints::validate_unique_append(table_schema, &existing_rows, row)?;
 
-        let row_id = self.storage.next_row_id(table)?;
+        let row_id = self.next_row_id(table)?;
         let stored_row = StoredRow {
             row_id,
             values: row.to_vec(),
@@ -265,7 +266,7 @@ impl Engine {
             });
         }
 
-        crate::constraints::validate_stored_rows(table_schema, &rows)?;
+        constraints::validate_stored_rows(table_schema, &rows)?;
         self.storage.rewrite_rows(table, &rows)
     }
 
@@ -286,7 +287,7 @@ impl Engine {
         table_schema.validate_row(values)?;
         self.storage.ensure_table_exists(table)?;
 
-        if self.storage.find_row_by_id(table, row_id)?.is_some() {
+        if self.find_row_by_id(table, row_id)?.is_some() {
             return Err(DbError::InvalidValue {
                 column: "row_id".to_string(),
                 reason: format!("row id {row_id} already exists in table '{table}'"),
@@ -294,7 +295,7 @@ impl Engine {
         }
 
         let existing_rows = self.storage.load_rows(table)?;
-        crate::constraints::validate_unique_append(table_schema, &existing_rows, values)?;
+        constraints::validate_unique_append(table_schema, &existing_rows, values)?;
 
         let stored_row = StoredRow {
             row_id,
@@ -372,13 +373,49 @@ impl Engine {
         }
     }
 
+    /// Return one stored row by internal `row_id`, or `None`.
+    fn find_row_by_id(&self, table: &str, row_id: u64) -> DbResult<Option<StoredRow>> {
+        let mut found = None;
+        self.storage.scan_apply_rows(table, |row| {
+            if row.row_id == row_id {
+                found = Some(row.clone());
+            }
+            Ok(())
+        })?;
+        Ok(found)
+    }
+
+    /// Return the next available internal `row_id` for a table.
+    fn next_row_id(&self, table: &str) -> DbResult<u64> {
+        let mut max_row_id = 0u64;
+        self.storage.scan_apply_rows(table, |row| {
+            max_row_id = max_row_id.max(row.row_id);
+            Ok(())
+        })?;
+        Ok(max_row_id + 1)
+    }
+
+    /// Replace one existing table definition in schema metadata.
+    pub(super) fn replace_table_schema(
+        &self,
+        table: &str,
+        new_schema: TableSchema,
+    ) -> DbResult<()> {
+        let mut schema = self.storage.load_schema()?;
+        if !schema.tables.contains_key(table) {
+            return Err(DbError::TableNotFound(table.to_string()));
+        }
+        schema.tables.insert(table.to_string(), new_schema);
+        self.storage.save_schema(&schema)
+    }
+
     /// Undo one inserted row by removing the row with the matching internal
     /// `row_id`.
     ///
     /// # Errors
     /// Returns an error if the row cannot be removed.
     fn undo_insert_row(&self, table: &str, row_id: u64) -> DbResult<()> {
-        match self.storage.find_row_by_id(table, row_id)? {
+        match self.find_row_by_id(table, row_id)? {
             Some(_) => self.delete_stored_row_by_id(table, row_id),
             None => Ok(()),
         }

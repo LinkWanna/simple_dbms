@@ -71,8 +71,7 @@ impl Engine {
                         .append(&WalRecord::ReplaceSchema { old_schema })?;
                 }
 
-                self.storage
-                    .replace_table_schema(&table_name, table_schema)?;
+                self.replace_table_schema(&table_name, table_schema)?;
 
                 Ok(ExecutionResult::Message(format!(
                     "Column '{old_column_name}' renamed to '{new_column_name}' in '{table_name}'"
@@ -98,7 +97,7 @@ impl Engine {
 
                 if new_column.not_null && new_column.default.is_none() {
                     let mut has_rows = false;
-                    self.storage.scan_apply(&table_name, |_| {
+                    self.storage.scan_apply_rows(&table_name, |_| {
                         has_rows = true;
                         Ok(())
                     })?;
@@ -115,8 +114,8 @@ impl Engine {
                 let old_rows = self.storage.load_rows(&table_name)?;
 
                 let mut rewritten_rows = Vec::new();
-                self.storage.scan_apply(&table_name, |row| {
-                    let mut rewritten_row = row.to_vec();
+                self.storage.scan_apply_rows(&table_name, |stored_row| {
+                    let mut rewritten_row = stored_row.values.to_vec();
                     rewritten_row.push(new_column.default.clone().unwrap_or(Value::Null));
                     updated_table_schema.validate_row(&rewritten_row)?;
                     rewritten_rows.push(rewritten_row);
@@ -133,8 +132,7 @@ impl Engine {
                         .append(&WalRecord::ReplaceSchema { old_schema })?;
                 }
 
-                self.storage
-                    .replace_table_schema(&table_name, updated_table_schema)?;
+                self.replace_table_schema(&table_name, updated_table_schema)?;
                 self.rewrite_table_from_values(&table_name, &rewritten_rows)?;
 
                 Ok(ExecutionResult::Message(format!(
@@ -158,8 +156,8 @@ impl Engine {
                 let old_rows = self.storage.load_rows(&table_name)?;
 
                 let mut rewritten_rows = Vec::new();
-                self.storage.scan_apply(&table_name, |row| {
-                    let mut rewritten_row = row.to_vec();
+                self.storage.scan_apply_rows(&table_name, |stored_row| {
+                    let mut rewritten_row = stored_row.values.to_vec();
                     rewritten_row.remove(column_index);
                     updated_table_schema.validate_row(&rewritten_row)?;
                     rewritten_rows.push(rewritten_row);
@@ -176,8 +174,7 @@ impl Engine {
                         .append(&WalRecord::ReplaceSchema { old_schema })?;
                 }
 
-                self.storage
-                    .replace_table_schema(&table_name, updated_table_schema)?;
+                self.replace_table_schema(&table_name, updated_table_schema)?;
                 self.rewrite_table_from_values(&table_name, &rewritten_rows)?;
 
                 Ok(ExecutionResult::Message(format!(

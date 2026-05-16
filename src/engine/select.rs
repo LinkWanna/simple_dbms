@@ -59,11 +59,11 @@ impl Engine {
         let filter = query.where_clause.as_ref();
         let mut rows: Vec<Vec<Value>> = Vec::new();
 
-        self.storage.scan_apply(&table_name, |row| {
-            if Self::matches_filter(&table_schema, row, filter)? {
+        self.storage.scan_apply_rows(&table_name, |stored_row| {
+            if Self::matches_filter(&table_schema, &stored_row.values, filter)? {
                 let projected: Vec<Value> = projection_indices
                     .iter()
-                    .map(|&idx| row[idx].clone())
+                    .map(|&idx| stored_row.values[idx].clone())
                     .collect();
                 rows.push(projected);
             }
