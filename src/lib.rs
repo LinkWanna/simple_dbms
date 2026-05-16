@@ -2,6 +2,7 @@ pub mod engine;
 pub mod error;
 pub mod schema;
 
+mod constraints;
 mod storage;
 mod wal;
 

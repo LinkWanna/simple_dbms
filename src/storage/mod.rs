@@ -1,4 +1,3 @@
-pub mod constraints;
 pub mod layout;
 pub mod row_store;
 pub mod schema_store;
@@ -149,11 +148,7 @@ impl Storage {
 
     /// Rewrite a table file with the provided stored rows.
     pub fn rewrite_rows(&self, table: &str, rows: &[StoredRow]) -> DbResult<()> {
-        let schema = self.load_schema()?;
-        let table_schema = schema.get_table(table)?;
-
         self.ensure_table_exists(table)?;
-        constraints::validate_stored_rows(table_schema, rows)?;
         self.row_store.rewrite_rows(table, rows)
     }
 

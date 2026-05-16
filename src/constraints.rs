@@ -2,8 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::error::{DbError, DbResult};
 use crate::schema::{TableSchema, Value};
-
-use super::StoredRow;
+use crate::storage::StoredRow;
 
 /// Validate a full stored-row replacement set for schema correctness,
 /// internal row-id uniqueness, and UNIQUE column constraints.

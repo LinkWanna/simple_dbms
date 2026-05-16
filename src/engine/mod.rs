@@ -156,7 +156,7 @@ impl Engine {
         self.storage.ensure_table_exists(table)?;
 
         let existing_rows = self.storage.load_rows(table)?;
-        crate::storage::constraints::validate_unique_append(table_schema, &existing_rows, row)?;
+        crate::constraints::validate_unique_append(table_schema, &existing_rows, row)?;
 
         let row_id = self.storage.next_row_id(table)?;
         let stored_row = StoredRow {
@@ -265,7 +265,7 @@ impl Engine {
             });
         }
 
-        crate::storage::constraints::validate_stored_rows(table_schema, &rows)?;
+        crate::constraints::validate_stored_rows(table_schema, &rows)?;
         self.storage.rewrite_rows(table, &rows)
     }
 
@@ -294,7 +294,7 @@ impl Engine {
         }
 
         let existing_rows = self.storage.load_rows(table)?;
-        crate::storage::constraints::validate_unique_append(table_schema, &existing_rows, values)?;
+        crate::constraints::validate_unique_append(table_schema, &existing_rows, values)?;
 
         let stored_row = StoredRow {
             row_id,
